@@ -2,11 +2,6 @@ name: Pettyl Vendor Extractor CI
 
 on:
   workflow_dispatch:
-    inputs:
-      img_url:
-        description: 'URL directa del vendor.img (opcional)'
-        required: false
-        default: ''
 
 permissions:
   contents: write
@@ -18,22 +13,16 @@ jobs:
     steps:
       - name: Checkout del repositorio
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Instalar dependencias
         run: |
           sudo apt-get update
-          sudo apt-get install -y simg2img p7zip-full e2fsprogs file wget
+          sudo apt-get install -y simg2img p7zip-full e2fsprogs file
 
-      - name: Obtener imagen
+      - name: Validar existencia del vendor.img
         run: |
-          if [ -n "${{ github.event.inputs.img_url }}" ]; then
-            wget -O vendor.img "${{ github.event.inputs.img_url }}"
-          fi
-          
           if [ ! -f "vendor.img" ]; then
-            echo "Error: No se encontró vendor.img. Súbelo al repo o proporciona una URL."
+            echo "Error: vendor.img no encontrado en la raiz."
             exit 1
           fi
 
@@ -54,30 +43,25 @@ jobs:
           sudo cp -a /mnt/vendor/. proprietary/
           sudo chown -R $USER:$USER proprietary/
           sudo umount /mnt/vendor
-          rm -f vendor_raw.img vendor.img
+          rm -f vendor_raw.img
 
       - name: Generar archivos Makefiles
         run: |
-          DEVICE="pettyl"
-          OUT_PATH="proprietary/pettyl-vendor.mk"
+          # Crear Android.mk
+          printf "LOCAL_PATH := \$(call my-dir)\n\nifeq (\$(TARGET_DEVICE),pettyl)\ninclude \$(CLEAR_VARS)\nendif\n" > proprietary/Android.mk
           
-          echo "LOCAL_PATH := \$(call my-dir)" > proprietary/Android.mk
-          echo "ifeq (\$(TARGET_DEVICE),$DEVICE)" >> proprietary/Android.mk
-          echo "include \$(CLEAR_VARS)" >> proprietary/Android.mk
-          echo "endif" >> proprietary/Android.mk
+          # Crear pettyl-vendor.mk
+          echo "# Vendor blobs for pettyl" > proprietary/pettyl-vendor.mk
+          echo "PRODUCT_COPY_FILES += \\" >> proprietary/pettyl-vendor.mk
           
-          echo "# Vendor blobs for $DEVICE" > $OUT_PATH
-          echo "PRODUCT_COPY_FILES += \\" >> $OUT_PATH
-          
-          # Generar lista de archivos de forma limpia
-          cd proprietary
-          find . -type f -not -name "Android.mk" -not -name "pettyl-vendor.mk" | sed 's|^\./||' | while read -r line; do
-            echo "    vendor/$DEVICE/proprietary/$line:$(TARGET_COPY_OUT_VENDOR)/$line \\" >> ../$OUT_PATH
+          # Listar archivos evitando los propios makefiles
+          find proprietary -type f -not -name "Android.mk" -not -name "pettyl-vendor.mk" | while read -r file; do
+            rel_path=${file#proprietary/}
+            echo "    vendor/pettyl/proprietary/\$rel_path:\$(TARGET_COPY_OUT_VENDOR)/\$rel_path \\" >> proprietary/pettyl-vendor.mk
           done
-          cd ..
           
-          # Eliminar la última barra invertida para evitar errores de sintaxis
-          sed -i '$ s/ \\//' $OUT_PATH
+          # Limpiar la ultima barra invertida
+          sed -i '$ s/ \\//' proprietary/pettyl-vendor.mk
 
       - name: Push al repositorio
         run: |
@@ -85,8 +69,8 @@ jobs:
           git config --global user.email "bot@extractor.com"
           git add proprietary/
           if git diff --staged --quiet; then
-            echo "Sin cambios para commitear."
+            echo "Sin cambios detectados."
           else
-            git commit -m "feat: extracción completa del vendor de Pettyl"
+            git commit -m "feat: extraccion completa del vendor de Pettyl"
             git push origin main
           fi
