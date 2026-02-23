@@ -68,4 +68,3 @@ jobs:
           git add .
           git commit -m "Pettyl: Estructura de vendor generada automáticamente desde img" || echo "No hay cambios"
           git push
-          
