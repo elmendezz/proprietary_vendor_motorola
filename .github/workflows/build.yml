@@ -1,0 +1,70 @@
+# Version: 1
+# Dependencies:
+# - setup-python@v4
+# - p7zip-full (para manejar imágenes simg si es necesario)
+# ChangeLog:
+# - Initial GitHub Actions workflow for Pettyl vendor extraction
+# - Added mount and copy logic for proprietary files
+# - Structure creation for vendor/motorola/pettyl
+
+name: Pettyl Vendor Extractor CI
+
+on:
+  workflow_dispatch: # Se activa manualmente para que no gaste minutos a lo loco
+
+jobs:
+  extract-vendor:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del repo
+        uses: actions/checkout@v3
+
+      - name: Preparar entorno
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full raw2simg
+
+      - name: Crear estructura de carpetas
+        run: |
+          mkdir -p proprietary/bin
+          mkdir -p proprietary/lib/hw
+          mkdir -p proprietary/etc
+          mkdir -p proprietary/vendor/firmware
+
+      - name: Montar vendor.img
+        run: |
+          # Creamos un punto de montaje
+          mkdir -p mnt_vendor
+          # Intentamos montar la imagen (asumiendo que es ext4 raw)
+          # Si falla, podrías necesitar simg2img si la imagen es 'sparse'
+          sudo mount -o loop vendor.img mnt_vendor/ || echo "Fallo al montar, verifica si es sparse image"
+
+      - name: Extraer archivos propietarios
+        run: |
+          # Aquí es donde ocurre la magia. 
+          # Por ahora copiamos lo crítico para Android 10 (HALs y Configs)
+          
+          echo "Copiando binarios y librerías clave..."
+          sudo cp -r mnt_vendor/bin/* proprietary/bin/ || true
+          sudo cp -r mnt_vendor/lib/hw/* proprietary/lib/hw/ || true
+          sudo cp -r mnt_vendor/etc/* proprietary/etc/ || true
+          
+          # Limpiamos permisos para que Git no se queje
+          sudo chown -R $USER:$USER proprietary/
+
+      - name: Generar archivos de configuración (Android.mk / pettyl-vendor.mk)
+        run: |
+          echo "PRODUCT_COPY_FILES += \\" > pettyl-vendor.mk
+          find proprietary -type f | sed 's|^|    $(LOCAL_PATH)/|' | sed 's|$|:$(TARGET_COPY_OUT_VENDOR)/|' >> pettyl-vendor.mk
+
+      - name: Desmontar imagen
+        run: sudo umount mnt_vendor
+
+      - name: Commit y Push de la estructura
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add .
+          git commit -m "Pettyl: Estructura de vendor generada automáticamente desde img" || echo "No hay cambios"
+          git push
